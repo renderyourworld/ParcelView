@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -167,6 +169,28 @@ func taxParcelLayerName(countyID uint16, year int) string {
 	return fmt.Sprintf("tax_parcels_%d_%d", countyID, year)
 }
 
+func resolveLayerTypeID(layerName string) (int16, bool, error) {
+	if layerName == "" {
+		return 0, false, nil
+	}
+
+	var layerID int16
+	row := db.DB.Raw(`
+		SELECT id
+		FROM layer_types
+		WHERE name = ?
+		LIMIT 1
+	`, layerName).Row()
+	if err := row.Scan(&layerID); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("lookup layer_types.id for %q: %w", layerName, err)
+	}
+
+	return layerID, true, nil
+}
+
 // GetTaxHeatmapTile serves pre-generated tax heatmap tiles for a specific year.
 // URL format: /api/tiles/tax-heatmap/{z}/{x}/{y}?year=2024
 func GetTaxHeatmapTile(c *gin.Context) {
@@ -195,7 +219,16 @@ func GetTaxHeatmapTile(c *gin.Context) {
 	if !ok {
 		return
 	}
-	layer := "tax_heatmap_" + strconv.Itoa(year)
+	layerName := "tax_heatmap_" + strconv.Itoa(year)
+	layerID, found, err := resolveLayerTypeID(layerName)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		c.Status(http.StatusNoContent)
+		return
+	}
 	cacheKey := fmt.Sprintf("%d:%d:%d:%d", year, z, x, y)
 
 	if tiles.TaxHeatmapTilesCache != nil {
@@ -210,13 +243,13 @@ func GetTaxHeatmapTile(c *gin.Context) {
 	}
 
 	var tileData []byte
-	row := db.DB.Raw(`
-		SELECT data
-		FROM tiles
-		WHERE z = ? AND x = ? AND y = ? AND layer = ?
-	`, z, x, y, layer).Row()
 
-	err = row.Scan(&tileData)
+	ctx := context.Background()
+	err = db.Pool.QueryRow(ctx, `
+		SELECT data FROM tiles 
+		WHERE z = $1 AND x = $2 AND y = $3 AND layer = $4
+	`, z, x, y, layerID).Scan(&tileData)
+
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			c.Status(http.StatusNoContent)
@@ -271,7 +304,12 @@ func GetTaxParcelTile(c *gin.Context) {
 		return
 	}
 	countyID := parseCountyID(c)
-	precomputedLayer := taxParcelLayerName(countyID, year)
+	precomputedLayerName := taxParcelLayerName(countyID, year)
+	precomputedLayerID, found, err := resolveLayerTypeID(precomputedLayerName)
+	if err != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
 	cacheKey := fmt.Sprintf("%d:%d:%d:%d:%d", countyID, year, z, x, y)
 
 	if tiles.TaxParcelTilesCache != nil {
@@ -288,23 +326,25 @@ func GetTaxParcelTile(c *gin.Context) {
 
 	// Try precomputed tax parcel tiles first.
 	var precomputedTile []byte
-	preRow := db.DB.Raw(`
-		SELECT data
-		FROM tiles
-		WHERE z = ? AND x = ? AND y = ? AND layer = ?
-	`, z, x, y, precomputedLayer).Row()
-	preErr := preRow.Scan(&precomputedTile)
-	if preErr == nil && len(precomputedTile) > 0 {
-		if tiles.TaxParcelTilesCache != nil {
-			tiles.TaxParcelTilesCache.Put(cacheKey, precomputedTile)
+	if found {
+		ctx := context.Background()
+		preErr := db.Pool.QueryRow(ctx, `
+			SELECT data FROM tiles 
+			WHERE z = $1 AND x = $2 AND y = $3 AND layer = $4
+		`, z, x, y, precomputedLayerID).Scan(&precomputedTile)
+
+		if preErr == nil && len(precomputedTile) > 0 {
+			if tiles.TaxParcelTilesCache != nil {
+				tiles.TaxParcelTilesCache.Put(cacheKey, precomputedTile)
+			}
+			c.Header("Content-Type", "application/x-protobuf")
+			c.Header("Content-Encoding", "gzip")
+			c.Header("Cache-Control", "public, max-age=2592000, immutable")
+			c.Header("X-Cache", "MISS")
+			c.Header("X-Layer", fmt.Sprintf("tax_parcels_%d", year))
+			c.Data(http.StatusOK, "application/x-protobuf", precomputedTile)
+			return
 		}
-		c.Header("Content-Type", "application/x-protobuf")
-		c.Header("Content-Encoding", "gzip")
-		c.Header("Cache-Control", "public, max-age=2592000, immutable")
-		c.Header("X-Cache", "MISS")
-		c.Header("X-Layer", fmt.Sprintf("tax_parcels_%d", year))
-		c.Data(http.StatusOK, "application/x-protobuf", precomputedTile)
-		return
 	}
 
 	query := `

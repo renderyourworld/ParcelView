@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -62,13 +63,13 @@ func GetVectorTile(c *gin.Context) {
 	// Get tile from database if there is a cache miss
 	// Tiles are stored gzip-compressed in the database
 	var tileData []byte
-	row := db.DB.Raw(`
-		SELECT data 
-		FROM tiles 
-		WHERE z = ? AND x = ? AND y = ? AND layer = 'parcels'
-	`, z, x, y).Row()
 
-	err = row.Scan(&tileData)
+	ctx := context.Background()
+	err = db.Pool.QueryRow(ctx, `
+		SELECT data FROM tiles 
+		WHERE z = $1 AND x = $2 AND y = $3 AND layer = $4
+	`, z, x, y, 1).Scan(&tileData)
+
 	if err != nil {
 		// Check if it's a "no rows" error (tile doesn't exist)
 		if err.Error() == "sql: no rows in result set" {
@@ -141,7 +142,7 @@ func GetCountyTile(c *gin.Context) {
 	row := db.DB.Raw(`
 		SELECT data 
 		FROM tiles 
-		WHERE z = ? AND x = ? AND y = ? AND layer = 'counties'
+		WHERE z = ? AND x = ? AND y = ? AND layer = 2
 	`, z, x, y).Row()
 
 	err = row.Scan(&tileData)

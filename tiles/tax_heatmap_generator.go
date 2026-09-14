@@ -51,6 +51,18 @@ func taxParcelLayerName(countyID uint16, year int) string {
 	return fmt.Sprintf("tax_parcels_%d_%d", countyID, year)
 }
 
+func resolveLayerTypeID(gormDB *gorm.DB, layerName string) (int16, error) {
+	if layerName == "" {
+		return 0, fmt.Errorf("empty layer name")
+	}
+
+	var layerID int16
+	if err := gormDB.Table("layer_types").Select("id").Where("name = ?", layerName).Limit(1).Scan(&layerID).Error; err != nil {
+		return 0, fmt.Errorf("lookup layer_types.id for %q: %w", layerName, err)
+	}
+	return layerID, nil
+}
+
 func heatmapCellSizeMeters(z int) float64 {
 	// World width in Web Mercator meters.
 	const worldWidth = 40075016.68557849
@@ -186,6 +198,17 @@ func generateTaxHeatmapWithWorkers(gormDB *gorm.DB, countyID uint16, years []int
 	const numWorkers = 24
 	const batchSize = 100
 
+	layerIDs := make(map[int]int16, len(years))
+	for _, year := range years {
+		layerID, err := resolveLayerTypeID(gormDB, taxHeatmapLayerName(year))
+		if err != nil {
+			log.Printf("ERROR: failed resolving layer id for year=%d: %v", year, err)
+			errorsCount += len(tilesToBuild)
+			return stored, empty, errorsCount
+		}
+		layerIDs[year] = layerID
+	}
+
 	total := len(tilesToBuild) * len(years)
 	taskChan := make(chan taxHeatmapTask, numWorkers*2)
 	resultChan := make(chan taxHeatmapResult, numWorkers*2)
@@ -249,13 +272,19 @@ func generateTaxHeatmapWithWorkers(gormDB *gorm.DB, countyID uint16, years []int
 		} else if result.isEmpty {
 			empty++
 		} else {
+			layerID, ok := layerIDs[result.year]
+			if !ok {
+				log.Printf("ERROR: no layer id found for year=%d layer=%s", result.year, taxHeatmapLayerName(result.year))
+				errorsCount++
+				continue
+			}
 			batch.Queue(`
 				INSERT INTO tiles (z, x, y, layer, data, created_at)
 				VALUES ($1, $2, $3, $4, $5, NOW())
 				ON CONFLICT (z, x, y, layer) DO UPDATE SET
 				  data = EXCLUDED.data,
 				  created_at = NOW()
-			`, result.z, result.x, result.y, taxHeatmapLayerName(result.year), result.mvtData)
+			`, result.z, result.x, result.y, layerID, result.mvtData)
 			batchCount++
 		}
 
@@ -391,6 +420,17 @@ func generateTaxParcelsWithWorkers(gormDB *gorm.DB, countyID uint16, years []int
 	const numWorkers = 24
 	const batchSize = 100
 
+	layerIDs := make(map[int]int16, len(years))
+	for _, year := range years {
+		layerID, err := resolveLayerTypeID(gormDB, taxParcelLayerName(countyID, year))
+		if err != nil {
+			log.Printf("ERROR: failed resolving layer id for county=%d year=%d: %v", countyID, year, err)
+			errorsCount += len(tilesToBuild)
+			return stored, empty, errorsCount
+		}
+		layerIDs[year] = layerID
+	}
+
 	total := len(tilesToBuild) * len(years)
 	taskChan := make(chan taxParcelTask, numWorkers*2)
 	resultChan := make(chan taxParcelResult, numWorkers*2)
@@ -454,13 +494,19 @@ func generateTaxParcelsWithWorkers(gormDB *gorm.DB, countyID uint16, years []int
 		} else if result.isEmpty {
 			empty++
 		} else {
+			layerID, ok := layerIDs[result.year]
+			if !ok {
+				log.Printf("ERROR: no layer id found for county=%d year=%d layer=%s", countyID, result.year, taxParcelLayerName(countyID, result.year))
+				errorsCount++
+				continue
+			}
 			batch.Queue(`
 				INSERT INTO tiles (z, x, y, layer, data, created_at)
 				VALUES ($1, $2, $3, $4, $5, NOW())
 				ON CONFLICT (z, x, y, layer) DO UPDATE SET
 				  data = EXCLUDED.data,
 				  created_at = NOW()
-			`, result.z, result.x, result.y, taxParcelLayerName(countyID, result.year), result.mvtData)
+			`, result.z, result.x, result.y, layerID, result.mvtData)
 			batchCount++
 		}
 

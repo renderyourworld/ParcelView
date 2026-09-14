@@ -536,7 +536,7 @@ func main() {
 		// Load zoom 6-8 county tiles (covers Georgia at most common view levels)
 		if err := db.DB.Raw(`
 			SELECT z, x, y, data FROM tiles 
-			WHERE layer = 'counties' AND z BETWEEN 6 AND 8
+			WHERE layer = 2 AND z BETWEEN 6 AND 8
 		`).Scan(&countyTiles).Error; err != nil {
 			log.Printf("WARNING: Failed to pre-warm county tiles cache: %v", err)
 			return

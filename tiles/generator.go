@@ -211,7 +211,7 @@ func generateTilesWithWorkers(gormDB *gorm.DB, tiles []tileCoord, perfLogger *ut
 			// Queue tile for batch insertion
 			batch.Queue(`
 				INSERT INTO tiles (z, x, y, layer, data, created_at)
-				VALUES ($1, $2, $3, 'parcels', $4, NOW())
+				VALUES ($1, $2, $3, 1, $4, NOW())
 				ON CONFLICT (z, x, y, layer) DO UPDATE SET
 				data = EXCLUDED.data,
 				created_at = NOW()
@@ -512,7 +512,7 @@ func GenerateCountyTiles(db *gorm.DB, minZoom, maxZoom int, logging bool) error 
 		// Queue tile for batch insertion
 		batch.Queue(`
 			INSERT INTO tiles (z, x, y, layer, data, created_at)
-			VALUES ($1, $2, $3, 'counties', $4, NOW())
+			VALUES ($1, $2, $3, 2, $4, NOW())
 			ON CONFLICT (z, x, y, layer) DO UPDATE SET
 			data = EXCLUDED.data,
 			created_at = NOW()
