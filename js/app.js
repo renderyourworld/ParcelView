@@ -343,6 +343,7 @@ async function loadMap() {
                 'counties': {
                     type: 'vector',
                     tiles: [`${window.location.origin}/api/tiles/counties/{z}/{x}/{y}`],
+                    bounds: [-85.62, 30.33, -80.73, 35.02], // Georgia bounding box with 0.02 buffer
                     minzoom: 0,
                     maxzoom: 12,
                     promoteId: 'id'

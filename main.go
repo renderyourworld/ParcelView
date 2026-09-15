@@ -533,10 +533,10 @@ func main() {
 			Y    int
 			Data []byte
 		}
-		// Load zoom 6-8 county tiles (covers Georgia at most common view levels)
+		// Load zoom 5-8 county tiles (covers Georgia at most common view levels)
 		if err := db.DB.Raw(`
 			SELECT z, x, y, data FROM tiles 
-			WHERE layer = 2 AND z BETWEEN 6 AND 8
+			WHERE layer = 2 AND z BETWEEN 5 AND 8
 		`).Scan(&countyTiles).Error; err != nil {
 			log.Printf("WARNING: Failed to pre-warm county tiles cache: %v", err)
 			return
@@ -545,7 +545,7 @@ func main() {
 			cacheKey := fmt.Sprintf("%d/%d/%d", t.Z, t.X, t.Y)
 			tiles.CountyTilesCache.Store(cacheKey, t.Data)
 		}
-		log.Printf("County tiles cache pre-warmed with %d tiles (zoom 6-8)", len(countyTiles))
+		log.Printf("County tiles cache pre-warmed with %d tiles (zoom 5-8)", len(countyTiles))
 	}()
 
 	// Pre-warm PMTiles cache with commonly accessed ranges
