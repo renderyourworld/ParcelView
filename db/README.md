@@ -41,6 +41,7 @@ erDiagram
     counties ||--o{ county_field_mappings : "id <- county_id"
     counties ||--o{ parcel_class_codes : "id <- county_id"
     parcels ||--o{ parcel_taxes : "id <- parcel_id"
+    layer_types ||--o{ tiles : "id <- layer"
 
     counties {
         smallint id PK
@@ -106,12 +107,17 @@ erDiagram
     }
 
     tiles {
-        smallint z PK
+        timestamp created_at
         integer x PK
         integer y PK
-        varchar(50) layer PK
+        smallint z PK
+        smallint layer FK "-> layer_types.id"
         bytea data
-        timestamp created_at
+    }
+
+    layer_types {
+        smallint id
+        varchar(50) name
     }
 
     county_field_mappings {
@@ -259,18 +265,17 @@ Pre-generated Mapbox Vector Tiles (MVT) stored as gzipped binary data.
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `z` | `smallint` | Zoom level (13-19 for parcels) |
+| `created_at` | `timestamp` | Tile generation time |
 | `x` | `integer` | Tile X coordinate |
 | `y` | `integer` | Tile Y coordinate |
-| `layer` | `varchar(50)` | Layer name (e.g., `parcels`, `counties`, `tax_heatmap_2024`) |
+| `z` | `smallint` | Zoom level (13-19 for parcels) |
+| `layer` | `smallint` | Foreign key to `layer_types.id` |
 | `data` | `bytea` | Gzipped MVT binary data |
-| `created_at` | `timestamp` | Tile generation time |
 
 **Primary Key:** Composite (`z`, `x`, `y`, `layer`)
 
 **Indexes:**
 - `tiles_pkey` - Primary key (btree)
-- `idx_tiles_lookup` - Query optimization (btree on `z`, `x`, `y`, `layer`)
 
 **Check Constraints:**
 - `z` must be between 0 and 30
@@ -278,6 +283,21 @@ Pre-generated Mapbox Vector Tiles (MVT) stored as gzipped binary data.
 
 > **Note:** Tax heatmap grid tiles are precomputed and stored as `tax_heatmap_<year>` layers.  
 > Parcel-level tax tiles are precomputed as `tax_parcels_<county_id>_<year>` when generated, and the API can fall back to runtime generation if a tile is missing.
+
+---
+
+### `layer_types`
+
+Layer types used with tiles
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | `smallint` | Primary key |
+| `name` | `varchar(50)` | Layer name e.g. `parcels`, `counties`, `tax_heatmap_2024` |
+
+**Indexes:**
+- `layer_types_pkey` - Primary key (btree)
+- `layer_types_name_key` - Unique constraint (btree on `name`)
 
 ---
 
