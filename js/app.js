@@ -90,13 +90,12 @@ function isMobile() {
     return window.innerWidth < 768;
 }
 
-// Get user's location (returns promise with {center, zoom} or defaults)
-async function getUserLocation() {
-    const defaults = { center: GEORGIA_CENTER, zoom: INITIAL_ZOOM };
-
+// Get the user's location without making the caller wait to render the map.
+// `found` distinguishes an unavailable location from a valid default location.
+function getUserLocation() {
     if (!navigator.geolocation) {
         console.log('Geolocation not supported');
-        return defaults;
+        return Promise.resolve({ found: false });
     }
 
     return new Promise((resolve) => {
@@ -106,11 +105,11 @@ async function getUserLocation() {
                 const lat = position.coords.latitude;
                 const zoom = isMobile() ? 16 : 12;
                 console.log(`Geolocation success: [${lng}, ${lat}], zoom: ${zoom}`);
-                resolve({ center: [lng, lat], zoom, accuracy: position.coords.accuracy });
+                resolve({ found: true, center: [lng, lat], zoom, accuracy: position.coords.accuracy });
             },
             (error) => {
                 console.log('Geolocation error:', error.message);
-                resolve(defaults);
+                resolve({ found: false });
             },
             { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
         );
@@ -124,6 +123,13 @@ async function loadMap() {
     ensureOwnerResultsStyles();
     ensureTaxHeatmapStyles();
     const initialSpriteStyleId = currentStyle === 'satellite' ? 'light' : currentStyle;
+
+    // Start location lookup now, but never delay the first map render for it.
+    performance.mark("geolocation-start");
+    const userLocationPromise = getUserLocation().then((location) => {
+        performance.mark("geolocation-resolved");
+        return location;
+    });
 
     const data = await fetchStyle(currentStyle);
 
@@ -282,16 +288,13 @@ async function loadMap() {
 
     const heatmapLayers = buildTaxHeatmapLayers();
 
-    // Get user location before initializing map
-    const userLocation = await getUserLocation();
-
-    // Initialize the map
+    // Initialize the map at the default statewide view while location resolves.
     window._tileCount = 0;
 
     const map = new maplibregl.Map({
         container: 'map',
-        center: userLocation.center,
-        zoom: userLocation.zoom,
+        center: GEORGIA_CENTER,
+        zoom: INITIAL_ZOOM,
         minZoom: 5,
         maxZoom: 19,
         attributionControl: false,
@@ -357,6 +360,19 @@ async function loadMap() {
             layers: [...basemapBaseLayers, ...countyLayers, ...heatmapLayers, ...parcelLayers, ...basemapLabelLayers]
         },
     });
+
+    performance.mark("map-created");
+
+    map.once("idle", () => performance.mark("map-idle"));
+
+    // Do not move the map after a user has started navigating it themselves.
+    let userHasInteracted = false;
+    const noteUserInteraction = () => {
+        userHasInteracted = true;
+    };
+    map.on("dragstart", noteUserInteraction);
+    map.on("zoomstart", noteUserInteraction);
+    map.on("rotatestart", noteUserInteraction);
 
     window.map = map; // Expose map for debugging
 
@@ -567,9 +583,27 @@ async function loadMap() {
     const locationControlsFeature = initLocationControlsFeature({
         map,
         maplibregl,
-        userLocation,
     });
     const stopSearchFlyTrackingConflicts = locationControlsFeature.stopSearchFlyTrackingConflicts;
+
+    const applyBackgroundLocation = () => {
+        userLocationPromise.then((location) => {
+            if (!location.found || userHasInteracted) return;
+
+            map.flyTo({
+                center: location.center,
+                zoom: location.zoom,
+                essential: true,
+            });
+            locationControlsFeature.triggerInitialLocation();
+            performance.mark("geolocation-map-recentered");
+        });
+    };
+    if (map.loaded()) {
+        applyBackgroundLocation();
+    } else {
+        map.once("load", applyBackgroundLocation);
+    }
 
     async function fetchParcelDetails(featureId) {
         if (parcelDetailsCache.has(featureId)) {

@@ -123,6 +123,10 @@ export function initLocationControlsFeature({ map, maplibregl, userLocation }) {
         });
     }
 
+    function triggerInitialLocation() {
+        geolocateControl.trigger();
+    }
+
     function stopSearchFlyTrackingConflicts() {
         if (compass.state === "COMPASS") {
             compass.stop();
@@ -139,6 +143,7 @@ export function initLocationControlsFeature({ map, maplibregl, userLocation }) {
 
     return {
         stopSearchFlyTrackingConflicts,
+        triggerInitialLocation,
     };
 }
 

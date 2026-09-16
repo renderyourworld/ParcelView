@@ -636,9 +636,10 @@ func main() {
 	// Serve JavaScript modules and style manifests.
 	router.Use(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/js/") && strings.HasSuffix(c.Request.URL.Path, ".js") {
-			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-			c.Header("Pragma", "no-cache")
-			c.Header("Expires", "0")
+			c.Header("Cache-Control", "public, no-cache")
+		}
+		if strings.HasPrefix(c.Request.URL.Path, "/styles/") && strings.HasSuffix(c.Request.URL.Path, ".json") {
+			c.Header("Cache-Control", "public, no-cache")
 		}
 		c.Next()
 	})
